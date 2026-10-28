@@ -1,5 +1,7 @@
-# Publie une version de Ghost : la branche upload/vX.Y.Z contient l'installateur découpé en morceaux (< 100 Mo)
-# et notes.md. Ce workflow recolle l'installateur, vérifie sa somme SHA-256, crée la release, puis supprime la branche.
+# Publie une version de Ghost depuis la branche upload/vX.Y.Z, puis supprime la branche.
+#  - installateur complet : parts/Ghost-Setup.exe.part* (morceaux < 100 Mo) + sha256.txt
+#  - petite mise à jour : Ghost-Patch-X.Y.Z.ghp ; l'installateur de la version précédente est remis dans la release
+#    pour les nouveaux utilisateurs (Ghost se met ensuite à jour tout seul)
 name: Publier une version
 on:
   push:
@@ -11,17 +13,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Recoller et vérifier l'installateur
-        run: |
-          set -e
-          VER="${GITHUB_REF_NAME#upload/}"
-          cat parts/Ghost-Setup.exe.part* > "Ghost-Setup-${VER#v}.exe"
-          echo "$(cat sha256.txt)  Ghost-Setup-${VER#v}.exe" | sha256sum -c -
-          echo "VER=$VER" >> "$GITHUB_ENV"
-      - name: Créer la release
+      - name: Préparer les fichiers
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$VER" "Ghost-Setup-${VER#v}.exe" --title "Ghost ${VER#v}" --notes-file notes.md --target main
+          set -e
+          VER="${GITHUB_REF_NAME#upload/}"; echo "VER=$VER" >> "$GITHUB_ENV"
+          mkdir out
+          if ls parts/Ghost-Setup.exe.part* >/dev/null 2>&1; then
+            cat parts/Ghost-Setup.exe.part* > "out/Ghost-Setup-${VER#v}.exe"
+            echo "$(cat sha256.txt)  out/Ghost-Setup-${VER#v}.exe" | sha256sum -c -
+          else
+            gh release download --repo "$GITHUB_REPOSITORY" --pattern "Ghost-Setup-*.exe" --dir out
+          fi
+          if ls Ghost-Patch-*.ghp >/dev/null 2>&1; then cp Ghost-Patch-*.ghp out/; fi
+          ls -la out
+      - name: Créer la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$VER" out/* --title "Ghost ${VER#v}" --notes-file notes.md --target main
       - name: Supprimer la branche d'envoi
         run: git push origin --delete "$GITHUB_REF_NAME"
